@@ -3,6 +3,13 @@
 #include <cmath>
 #include "config.hpp"
 #include "imu_test_decode.hpp"
+#ifdef PID_DEMO
+#include "control/pid_controller.hpp"
+#endif
+#ifdef ATTITUDE_TEST
+#include "control/gyro_calibration.hpp"
+#include "control/complementary_attitude.hpp"
+#endif
 
 namespace {
 // Register definitions and scaling: ICM-42688-P datasheet, bank 0.
@@ -12,6 +19,23 @@ constexpr uint8_t kGyroConfig = 0x4F, kAccelConfig = 0x50;
 constexpr uint8_t kStatus = 0x2D, kData = 0x1D;
 uint32_t last_sample_ms = 0, last_print_ms = 0, last_check_ms = 0;
 uint32_t sample_count = 0;
+#ifdef PID_DEMO
+// Educational, dimensionless corrections: NOT motor commands or tuned flight gains.
+constexpr control::PidGains kDemoGains{0.02F, 0.0F, 0.003F};
+constexpr control::PidLimits kDemoLimits{-1.0F, 1.0F, -0.2F, 0.2F};
+constexpr float kTargetDegrees = 0.0F;
+control::PidController roll_pid(kDemoGains, kDemoLimits, 10.0F);
+control::PidController pitch_pid(kDemoGains, kDemoLimits, 10.0F);
+void printPid(const char* axis, float angle, float rate, const control::PidTerms& t) {
+  Serial.printf("%s angle=%+.1f deg rate=%+.1f deg/s error=%+.1f P=%+.3f I=%+.3f D=%+.3f correction=%+.3f\n",
+                axis, angle, rate, t.error, t.proportional, t.integral, t.derivative, t.output);
+}
+#endif
+#ifdef ATTITUDE_TEST
+control::GyroCalibration calibration;
+control::ComplementaryAttitude estimator;
+uint32_t warmup_start_ms = 0, previous_sample_us = 0;
+#endif
 
 void readRegisters(uint8_t address, uint8_t* bytes, size_t count) {
   // A modest clock is more forgiving of short jumper wires than 8 MHz.
@@ -82,8 +106,20 @@ void setup() {
   delay(50);
   checkConfiguration();
   Serial.println("DETECTED: ICM42688P (0x47). Configuration verified.");
+#ifndef ATTITUDE_TEST
   Serial.println("Acceleration in g; gyro in deg/s WITHOUT bias correction; temperature in C.");
   Serial.println("Leave still, then gently tilt/rotate. Gyro measures turning speed, not angle.");
+#endif
+#ifdef ATTITUDE_TEST
+  Serial.println("ATTITUDE TEST: place the IMU flat, Z up, and leave it untouched.");
+  Serial.println("2-second warmup, then 500 still samples (~5 seconds). Motion restarts calibration.");
+  Serial.println("Small-tilt bench demonstration only; yaw is relative and will drift.");
+#ifdef PID_DEMO
+  Serial.println("PID DEMO - serial output ONLY; no motors. Targets: roll=0, pitch=0 deg.");
+  Serial.println("Demo gains: Kp=0.020 Ki=0 Kd=0.003. Integral disabled (PD). Corrections limited to [-1,+1].");
+#endif
+  warmup_start_ms = millis();
+#endif
   last_sample_ms = last_print_ms = last_check_ms = millis();
 }
 
@@ -109,6 +145,43 @@ void loop() {
   const auto s = imu_test::decode(bytes);
   last_sample_ms = now;
   ++sample_count;
+#ifdef ATTITUDE_TEST
+  if (now - warmup_start_ms < 2000) return;
+  if (!calibration.ready()) {
+    if (calibration.add(s)) {
+      Serial.printf("CALIBRATED gyro bias [deg/s]: X=%+.3f Y=%+.3f Z=%+.3f\n",
+                    calibration.bias(0), calibration.bias(1), calibration.bias(2));
+      Serial.println("READY: gently tilt about X or Y, then hold still. Angles should remain tilted.");
+      previous_sample_us = micros();
+    } else if (now - last_print_ms >= 1000) {
+      last_print_ms = now;
+      Serial.printf("Keep STILL: calibration %u/500 samples\n", calibration.count());
+    }
+    return;
+  }
+  const uint32_t sample_us = micros();
+  const float dt = static_cast<uint32_t>(sample_us - previous_sample_us) * 1e-6F;
+  previous_sample_us = sample_us;
+  if (dt > 0.1F) stop("Sampling gap >100 ms. Reset to recalibrate.");
+  const float gx = s.gx-calibration.bias(0);
+  const float gy = s.gy-calibration.bias(1);
+  const float gz = s.gz-calibration.bias(2);
+  const auto angles = estimator.update(s.ax,s.ay,s.az,gx,gy,gz,dt);
+#ifdef PID_DEMO
+  const auto roll_terms = roll_pid.update(kTargetDegrees, angles.roll, dt, gx);
+  const auto pitch_terms = pitch_pid.update(kTargetDegrees, angles.pitch, dt, gy);
+#endif
+  if (now - last_print_ms >= 200) {
+    last_print_ms = now;
+#ifdef PID_DEMO
+    printPid("ROLL ", angles.roll, gx, roll_terms);
+    printPid("PITCH", angles.pitch, gy, pitch_terms);
+#else
+    Serial.printf("roll=%+.1f deg | pitch=%+.1f deg | yaw_relative=%+.1f deg | gyro_corrected[deg/s] X=%+.2f Y=%+.2f Z=%+.2f\n",
+                  angles.roll,angles.pitch,angles.yaw,gx,gy,gz);
+#endif
+  }
+#else
   if (now - last_print_ms >= 200) {
     last_print_ms = now;
     const float norm = std::sqrt(s.ax * s.ax + s.ay * s.ay + s.az * s.az);
@@ -116,4 +189,5 @@ void loop() {
                   static_cast<unsigned long>(sample_count),
                   s.ax, s.ay, s.az, norm, s.gx, s.gy, s.gz, s.temperature_c);
   }
+#endif
 }

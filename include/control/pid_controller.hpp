@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace control {
 
@@ -34,7 +35,10 @@ class PidController {
         limits_(limits),
         derivative_cutoff_hz_(derivative_cutoff_hz) {}
 
-  PidTerms update(float setpoint, float measurement, float dt_seconds) {
+  // Optional measured rate uses the gyro for damping instead of differencing angles.
+  // Rate must use the same axis/sign as measurement (small tilts for body gyro).
+  PidTerms update(float setpoint, float measurement, float dt_seconds,
+                  float measured_rate = std::numeric_limits<float>::quiet_NaN()) {
     if (!(dt_seconds > 0.0F) || !std::isfinite(dt_seconds)) {
       return last_terms_;
     }
@@ -42,7 +46,9 @@ class PidController {
     const float error = setpoint - measurement;
 
     float raw_derivative = 0.0F;
-    if (initialized_) {
+    if (std::isfinite(measured_rate)) {
+      raw_derivative = -measured_rate;
+    } else if (initialized_) {
       // Differentiate the measurement to avoid a derivative kick when the
       // commanded angle changes suddenly.
       raw_derivative = -(measurement - previous_measurement_) / dt_seconds;
