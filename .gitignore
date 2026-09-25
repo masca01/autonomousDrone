@@ -3,3 +3,8 @@
 .vscode/c_cpp_properties.json
 .vscode/launch.json
 .vscode/ipch
+
+# Generated simulation results and Python caches
+simulation/output/
+__pycache__/
+.venv/

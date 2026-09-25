@@ -10,6 +10,15 @@ It intentionally does not generate motor signals yet.
 `imu_test` PlatformIO environment to check identity, wiring and sensor readings
 before running the full estimator/PID program.
 
+## Closed-loop controller experiment
+
+Run `python3 simulation/simulate_closed_loop.py` to compare P-only control and
+PD damping with the actual firmware PID implementation. A virtual roll axis
+starts at 20 degrees and receives a gust torque at 4 seconds. The script saves
+plots, CSV traces and settling metrics in `simulation/output/`.
+See [the simulation guide](docs/CLOSED_LOOP_SIMULATION.md) for assumptions and instructions.
+No hardware or firmware upload is required.
+
 ## What can be run without hardware
 
 Open this folder in VS Code. PlatformIO should recognize `platformio.ini` as the
