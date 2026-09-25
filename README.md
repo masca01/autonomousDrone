@@ -10,6 +10,15 @@ It intentionally does not generate motor signals yet.
 `imu_test` PlatformIO environment to check identity, wiring and sensor readings
 before running the full estimator/PID program.
 
+## Live USB plots
+
+With `pid_demo` or `attitude_test` uploaded, close PlatformIO Monitor and run
+`source .venv/bin/activate`, then `python tools/plot_live.py`. The plotter automatically selects a single USB
+serial device; use `--list` to list ports or supply a port explicitly.
+It shows roll/pitch angles and rates, plus corrections from `pid_demo`.
+See [live plotting instructions](docs/LIVE_PLOTTING.md). No new firmware upload
+is needed when either supported test is already running.
+
 ## Closed-loop controller experiment
 
 Run `python3 simulation/simulate_closed_loop.py` to compare P-only control and
